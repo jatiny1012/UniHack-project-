@@ -10,9 +10,10 @@ import { MessageSquareQuote } from "lucide-react";
 interface ClusterDashboardProps {
   cluster: Cluster;
   currentUserId: string | null;
+  isCrisis?: boolean;
 }
 
-export function ClusterDashboard({ cluster, currentUserId }: ClusterDashboardProps) {
+export function ClusterDashboard({ cluster, currentUserId, isCrisis }: ClusterDashboardProps) {
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -54,6 +55,7 @@ export function ClusterDashboard({ cluster, currentUserId }: ClusterDashboardPro
               key={m.user_id}
               member={m}
               isCurrentUser={m.user_id === currentUserId}
+              isCrisis={isCrisis}
             />
           ))}
         </div>

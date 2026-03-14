@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useKinshipStore } from "@/lib/store";
+import { useConnectivity } from "@/lib/ConnectivityContext";
+import { syncToOffline, offlineDB } from "@/lib/db";
 import { Navbar } from "@/components/layout/Navbar";
 import { ClusterDashboard } from "@/components/cluster/ClusterDashboard";
 import { CrisisSimulation } from "@/components/crisis/CrisisSimulation";
@@ -20,11 +22,13 @@ const NeighbourhoodMap = dynamic(() => import("@/components/map/NeighbourhoodMap
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { currentUser, token, cluster, setCluster, setCrisisActive, setSimulation, isSimulation } = useKinshipStore();
+  const { currentUser, token, cluster, setCluster, setCrisisActive, setSimulation, isSimulation, isCrisisActive } = useKinshipStore();
   const [showFlood, setShowFlood] = useState(false);
   const [showBushfire, setShowBushfire] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isCrisis, setIsCrisis] = useState(false);
+
+  const { mode } = useConnectivity();
 
   useEffect(() => {
     if (!token || !currentUser) {
@@ -34,12 +38,48 @@ export default function DashboardPage() {
 
     const loadCluster = async () => {
       try {
-        const res = await fetch(`/api/clusters?user_id=${currentUser.id}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        if (data && !data.error) {
-          setCluster(data);
+        if (mode === "offline" || mode === "p2p") {
+          // Load from Dexie cache
+          const membership = await offlineDB.clusterMembers
+            .where("user_id").equals(currentUser.id).first();
+          if (membership) {
+            const cachedCluster = await offlineDB.clusters.get(membership.cluster_id);
+            if (cachedCluster) {
+              const cachedMembers = await offlineDB.clusterMembers
+                .where("cluster_id").equals(cachedCluster.id).toArray();
+              // Enrich members with their profiles, capabilities, needs
+              const enrichedMembers = await Promise.all(
+                cachedMembers.map(async (m) => {
+                  const profile = await offlineDB.profiles.get(m.user_id);
+                  const caps = await offlineDB.capabilities
+                    .where("user_id").equals(m.user_id).toArray();
+                  const nds = await offlineDB.needs
+                    .where("user_id").equals(m.user_id).toArray();
+                  return { ...m, profile: (profile || {}) as any, capabilities: caps, needs: nds };
+                })
+              );
+              setCluster({ ...cachedCluster, members: enrichedMembers });
+            }
+          }
+        } else {
+          // Online — fetch from API and cache result
+          const res = await fetch(`/api/clusters?user_id=${currentUser.id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const data = await res.json();
+          if (data && !data.error) {
+            setCluster(data);
+            await syncToOffline({
+              cluster: data,
+              members: data.members || [],
+            });
+            // Also cache each member's profile, capabilities and needs individually
+            for (const m of data.members || []) {
+              if (m.profile) await offlineDB.profiles.put(m.profile);
+              if (m.capabilities?.length) await offlineDB.capabilities.bulkPut(m.capabilities);
+              if (m.needs?.length) await offlineDB.needs.bulkPut(m.needs);
+            }
+          }
         }
       } catch (error) {
         console.error("Failed to load cluster:", error);
@@ -48,7 +88,7 @@ export default function DashboardPage() {
     };
 
     loadCluster();
-  }, [currentUser, token, setCluster, router]);
+  }, [currentUser, token, setCluster, router, mode]);
 
   const handleSimulate = (data: {
     crisisEvent: { id: string; title: string };
@@ -128,6 +168,7 @@ export default function DashboardPage() {
           <ClusterDashboard
             cluster={cluster}
             currentUserId={currentUser.id}
+            isCrisis={isCrisisActive || isSimulation}
           />
         )}
 

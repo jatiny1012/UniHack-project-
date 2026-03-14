@@ -43,12 +43,27 @@ export function ResilienceGauge({ score, size = 140 }: ResilienceGaugeProps) {
           strokeDashoffset={strokeDashoffset}
           style={{ transition: "stroke-dashoffset 1.5s ease, stroke 0.5s ease" }}
         />
+        <text
+          x={size / 2}
+          y={size / 2}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          className="-rotate-90"
+          style={{ fill: color, fontSize: "2rem", fontWeight: 800, transform: `rotate(90deg)`, transformOrigin: `${size / 2}px ${size / 2}px` }}
+        >
+          {Math.round(animatedScore)}
+        </text>
+        <text
+          x={size / 2}
+          y={size / 2 + 22}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          style={{ fill: "#9CA3AF", fontSize: "0.75rem", fontWeight: 500, transform: `rotate(90deg)`, transformOrigin: `${size / 2}px ${size / 2}px` }}
+        >
+          / 100
+        </text>
       </svg>
-      <div className="relative -mt-[calc(50%+10px)] flex flex-col items-center justify-center" style={{ height: size }}>
-        <span className="text-3xl font-extrabold" style={{ color }}>{Math.round(animatedScore)}</span>
-        <span className="text-xs text-textMuted font-medium mt-0.5">/ 100</span>
-      </div>
-      <p className="text-sm font-medium text-textMuted -mt-2">Cluster Resilience</p>
+      <p className="text-sm font-medium text-textMuted mt-2">Cluster Resilience</p>
     </div>
   );
 }

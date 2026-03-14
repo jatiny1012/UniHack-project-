@@ -7,9 +7,10 @@ interface MemberCardProps {
   member: ClusterMember;
   currentUserLocation?: { lat: number; lng: number };
   isCurrentUser?: boolean;
+  isCrisis?: boolean;
 }
 
-export function MemberCard({ member, currentUserLocation, isCurrentUser }: MemberCardProps) {
+export function MemberCard({ member, currentUserLocation, isCurrentUser, isCrisis }: MemberCardProps) {
   const dist = member.distance_meters || 0;
   const priorityColors = { 1: "danger", 2: "accent", 3: "success" } as const;
 
@@ -79,26 +80,28 @@ export function MemberCard({ member, currentUserLocation, isCurrentUser }: Membe
       )}
 
       {/* Contact Details Grid */}
-      <div className="mt-auto pt-3 border-t border-gray-100 grid grid-cols-2 gap-x-2 gap-y-1 text-xs mt-3">
-        {member.profile.phone && (
-          <div>
-            <span className="text-textMuted block text-[10px] uppercase font-semibold">Mobile</span>
-            <span className="text-textDark font-medium font-mono">{member.profile.phone}</span>
-          </div>
-        )}
-        {member.profile.whatsapp && member.profile.whatsapp !== member.profile.phone && (
-          <div>
-            <span className="text-textMuted block text-[10px] uppercase font-semibold">WhatsApp</span>
-            <span className="text-textDark font-medium font-mono">{member.profile.whatsapp}</span>
-          </div>
-        )}
-        {member.profile.telegram_username && (
-          <div className="col-span-2">
-            <span className="text-textMuted block text-[10px] uppercase font-semibold">Telegram</span>
-            <span className="text-textDark font-medium">@{member.profile.telegram_username.replace("@", "")}</span>
-          </div>
-        )}
-      </div>
+      {isCrisis && (
+        <div className="mt-auto pt-3 border-t border-gray-100 grid grid-cols-2 gap-x-2 gap-y-1 text-xs mt-3">
+          {member.profile.phone && (
+            <div>
+              <span className="text-textMuted block text-[10px] uppercase font-semibold">Mobile</span>
+              <span className="text-textDark font-medium font-mono">{member.profile.phone}</span>
+            </div>
+          )}
+          {member.profile.whatsapp && member.profile.whatsapp !== member.profile.phone && (
+            <div>
+              <span className="text-textMuted block text-[10px] uppercase font-semibold">WhatsApp</span>
+              <span className="text-textDark font-medium font-mono">{member.profile.whatsapp}</span>
+            </div>
+          )}
+          {member.profile.telegram_username && (
+            <div className="col-span-2">
+              <span className="text-textMuted block text-[10px] uppercase font-semibold">Telegram</span>
+              <span className="text-textDark font-medium">@{member.profile.telegram_username.replace("@", "")}</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
