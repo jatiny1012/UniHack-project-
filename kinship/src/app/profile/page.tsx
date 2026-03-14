@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useKinshipStore } from "@/lib/store";
 import { Navbar } from "@/components/layout/Navbar";
@@ -8,33 +9,22 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { getCategoryIcon } from "@/lib/utils";
 import { ArrowLeft, MapPin, Users, Shield, Trash2, LogOut } from "lucide-react";
-import { SEED_PROFILES } from "@/data/seed-profiles";
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { currentUser, capabilities, needs, cluster, connectivity } = useKinshipStore();
+  const { currentUser, token, capabilities, needs, cluster, connectivity, logout } = useKinshipStore();
 
-  const user = currentUser || {
-    id: SEED_PROFILES[1].id,
-    name: SEED_PROFILES[1].name,
-    suburb: "Footscray",
-    postcode: "3011",
-    approximate_location: SEED_PROFILES[1].approximate_location,
-    household_size: SEED_PROFILES[1].household_size,
-    languages: SEED_PROFILES[1].languages,
-    lat: SEED_PROFILES[1].lat,
-    lng: SEED_PROFILES[1].lng,
-    created_at: new Date().toISOString(),
-  };
+  useEffect(() => {
+    if (!token || !currentUser) {
+      router.push("/onboard");
+    }
+  }, [token, currentUser, router]);
 
-  const userCaps = capabilities.length > 0
-    ? capabilities
-    : SEED_PROFILES[1].capabilities.map((c, i) => ({ id: `cap-${i}`, user_id: user.id, ...c }));
+  if (!token || !currentUser) return null;
 
-  const userNeeds = needs.length > 0
-    ? needs
-    : SEED_PROFILES[1].needs.map((n, i) => ({ id: `need-${i}`, user_id: user.id, detail: "", ...n }));
-
+  const user = currentUser;
+  const userCaps = capabilities;
+  const userNeeds = needs;
   const priorityVariant = { 1: "danger", 2: "accent", 3: "success" } as const;
 
   return (
@@ -136,15 +126,23 @@ export default function ProfilePage() {
           <h3 className="font-semibold text-textDark mb-3">Privacy & Security</h3>
           <div className="space-y-2 text-sm text-textMuted">
             <p>🔒 Your location is approximate (±50m)</p>
-            <p>👥 Visible to: your cluster only ({cluster?.members.length || 5} people)</p>
+            <p>👥 Visible to: your cluster only ({cluster?.members.length || 0} people)</p>
             <p>📡 Connectivity: {connectivity === "online" ? "🟢 Online" : connectivity === "offline" ? "🟡 Offline" : "🔵 P2P"}</p>
           </div>
           <div className="flex gap-2 mt-4">
             <Button variant="secondary" size="sm" className="text-textMuted">
               <LogOut size={14} /> Leave Cluster
             </Button>
-            <Button variant="ghost" size="sm" className="text-danger">
-              <Trash2 size={14} /> Delete My Data
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-danger"
+              onClick={() => {
+                logout();
+                router.push("/");
+              }}
+            >
+              <Trash2 size={14} /> Logout & Delete
             </Button>
           </div>
         </Card>

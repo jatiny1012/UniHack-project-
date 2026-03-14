@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase";
-import { SEED_PROFILES } from "@/data/seed-profiles";
+import { authenticateRequest } from "@/lib/auth-middleware";
 
 export async function GET(req: NextRequest) {
+  const auth = authenticateRequest(req);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(req.url);
     const q = (searchParams.get("q") || "").toLowerCase();
@@ -14,36 +17,28 @@ export async function GET(req: NextRequest) {
 
     const terms = q.split(/\s+/).filter(Boolean);
     const sb = createServerClient();
+    if (!sb) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 });
+    }
 
-    let profiles: Array<{
+    const { data: dbProfiles } = await sb
+      .from("profiles").select("id, name, lat, lng, languages, suburb").eq("suburb", suburb);
+
+    const profiles: Array<{
       id: string; name: string; lat: number; lng: number;
       languages: string[]; suburb: string;
       capabilities: { tag: string; category: string; detail: string }[];
     }> = [];
 
-    if (sb) {
-      const { data: dbProfiles } = await sb
-        .from("profiles").select("*").eq("suburb", suburb);
-
-      if (dbProfiles && dbProfiles.length > 0) {
-        for (const p of dbProfiles) {
-          const { data: caps } = await sb.from("capabilities").select("*").eq("user_id", p.id);
-          profiles.push({
-            id: p.id, name: p.name, lat: p.lat, lng: p.lng,
-            languages: p.languages || ["English"], suburb: p.suburb,
-            capabilities: (caps || []).map((c: Record<string, string>) => ({ tag: c.tag, category: c.category, detail: c.detail || "" })),
-          });
-        }
+    if (dbProfiles && dbProfiles.length > 0) {
+      for (const p of dbProfiles) {
+        const { data: caps } = await sb.from("capabilities").select("*").eq("user_id", p.id);
+        profiles.push({
+          id: p.id, name: p.name, lat: p.lat, lng: p.lng,
+          languages: p.languages || ["English"], suburb: p.suburb,
+          capabilities: (caps || []).map((c: Record<string, string>) => ({ tag: c.tag, category: c.category, detail: c.detail || "" })),
+        });
       }
-    }
-
-    // Fallback to seed data
-    if (profiles.length === 0) {
-      profiles = SEED_PROFILES.map((p) => ({
-        id: p.id, name: p.name, lat: p.lat, lng: p.lng,
-        languages: p.languages, suburb: p.suburb,
-        capabilities: p.capabilities,
-      }));
     }
 
     // Fuzzy search: match query terms against all searchable fields

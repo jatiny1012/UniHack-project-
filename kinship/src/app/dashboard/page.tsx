@@ -10,8 +10,7 @@ import { CrisisSimulation } from "@/components/crisis/CrisisSimulation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { AlertTriangle, Droplets, Flame } from "lucide-react";
-import { SEED_PROFILES } from "@/data/seed-profiles";
-import type { Cluster, CapabilityCategory } from "@/types";
+import type { Cluster } from "@/types";
 import toast from "react-hot-toast";
 
 const NeighbourhoodMap = dynamic(() => import("@/components/map/NeighbourhoodMap"), {
@@ -21,50 +20,35 @@ const NeighbourhoodMap = dynamic(() => import("@/components/map/NeighbourhoodMap
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { currentUser, cluster, setCluster, setCrisisActive, setSimulation, isSimulation } = useKinshipStore();
+  const { currentUser, token, cluster, setCluster, setCrisisActive, setSimulation, isSimulation } = useKinshipStore();
   const [showFlood, setShowFlood] = useState(false);
   const [showBushfire, setShowBushfire] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isCrisis, setIsCrisis] = useState(false);
 
   useEffect(() => {
+    if (!token || !currentUser) {
+      router.push("/onboard");
+      return;
+    }
+
     const loadCluster = async () => {
-      const userId = currentUser?.id || SEED_PROFILES[1].id; // Default to Raj
       try {
-        const res = await fetch(`/api/clusters?user_id=${userId}`);
+        const res = await fetch(`/api/clusters?user_id=${currentUser.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
         const data = await res.json();
         if (data && !data.error) {
           setCluster(data);
         }
       } catch (error) {
         console.error("Failed to load cluster:", error);
-        // Build a fallback cluster from seed data
-        const fallback: Cluster = {
-          id: "fallback-cluster",
-          name: "The Barkly Street Five",
-          suburb: "Footscray",
-          resilience_score: 78,
-          gaps: ["No generator in cluster"],
-          explanation: "This cluster brings together Mrs Chen's cooking skills, Raj's vehicle and IT expertise, Maria's nursing background, Omar's large van for evacuations, and Sarah's accessible ground-floor home with generator. Together, they cover transport, medical aid, shelter, and food preparation.",
-          status: "peace",
-          created_at: new Date().toISOString(),
-          members: SEED_PROFILES.slice(0, 5).map((p, i) => ({
-            id: `member-${i}`,
-            user_id: p.id,
-            cluster_id: "fallback-cluster",
-            profile: { ...p, created_at: new Date().toISOString() },
-            capabilities: p.capabilities.map((c, ci) => ({ id: `cap-${p.id}-${ci}`, user_id: p.id, tag: c.tag, category: c.category as CapabilityCategory, detail: c.detail })),
-            needs: p.needs.map((n, ni) => ({ id: `need-${p.id}-${ni}`, user_id: p.id, tag: n.tag, category: n.category as CapabilityCategory, detail: "", priority: n.priority as 1 | 2 | 3 })),
-            distance_meters: 100 + i * 80,
-          })),
-        };
-        setCluster(fallback);
       }
       setLoading(false);
     };
 
     loadCluster();
-  }, [currentUser, setCluster]);
+  }, [currentUser, token, setCluster, router]);
 
   const handleSimulate = (data: {
     crisisEvent: { id: string; title: string };
@@ -87,6 +71,8 @@ export default function DashboardPage() {
     setSimulation(false);
   };
 
+  if (!token || !currentUser) return null;
+
   if (loading) {
     return (
       <>
@@ -108,7 +94,7 @@ export default function DashboardPage() {
           <div className="relative" style={{ height: "45vh", minHeight: "300px" }}>
             <NeighbourhoodMap
               cluster={cluster}
-              currentUserId={currentUser?.id || SEED_PROFILES[1].id}
+              currentUserId={currentUser.id}
               showFloodZones={showFlood}
               showBushfire={showBushfire}
               isCrisis={isCrisis}
@@ -141,8 +127,14 @@ export default function DashboardPage() {
         {cluster && (
           <ClusterDashboard
             cluster={cluster}
-            currentUserId={currentUser?.id || SEED_PROFILES[1].id}
+            currentUserId={currentUser.id}
           />
+        )}
+
+        {!cluster && (
+          <Card className="text-center p-8">
+            <p className="text-textMuted">No cluster assigned yet. More neighbours need to join your area first.</p>
+          </Card>
         )}
 
         {/* Action Bar */}

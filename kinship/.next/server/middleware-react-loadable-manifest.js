@@ -1,1 +1,0 @@
-self.__REACT_LOADABLE_MANIFEST='{"app\\\\dashboard\\\\page.tsx -> @/components/map/NeighbourhoodMap":{"id":6683,"files":["static/chunks/d0deef33.bd75b11a952a2d3d.js","static/chunks/683.6474c4bc47f97491.js"]}}';

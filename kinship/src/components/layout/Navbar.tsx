@@ -1,19 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Home, Map, AlertTriangle, User, Search } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { Home, Map, AlertTriangle, User, Search, LogOut } from "lucide-react";
 import { useKinshipStore } from "@/lib/store";
+import { clearAuthFromOffline } from "@/lib/db";
 import { ConnectivityBanner } from "./ConnectivityBanner";
 import { useState } from "react";
 
 export function Navbar() {
   const pathname = usePathname();
-  const { isCrisisActive } = useKinshipStore();
+  const router = useRouter();
+  const { isCrisisActive, token, logout } = useKinshipStore();
   const [showSearch, setShowSearch] = useState(false);
 
+  const handleLogout = async () => {
+    await clearAuthFromOffline();
+    logout();
+    router.push("/");
+  };
+
   const navItems = [
-    { href: "/", icon: Home, label: "Home" },
     { href: "/dashboard", icon: Map, label: "Dashboard" },
     { href: "/crisis", icon: AlertTriangle, label: "Crisis" },
     { href: "/profile", icon: User, label: "Profile" },
@@ -26,7 +33,7 @@ export function Navbar() {
       }`}>
         <div className="max-w-5xl mx-auto px-4">
           <div className="flex items-center justify-between h-14">
-            <Link href="/" className={`text-xl font-extrabold tracking-tight ${
+            <Link href="/dashboard" className={`text-xl font-extrabold tracking-tight ${
               isCrisisActive ? "text-white" : "text-primary"
             }`}>
               Kinship
@@ -62,6 +69,22 @@ export function Navbar() {
                   </Link>
                 );
               })}
+
+              {/* Logout button */}
+              {token && (
+                <button
+                  onClick={handleLogout}
+                  className={`p-2 rounded-lg transition-colors ${
+                    isCrisisActive
+                      ? "text-white/70 hover:bg-white/10"
+                      : "text-textMuted hover:bg-red-50 hover:text-danger"
+                  }`}
+                  aria-label="Logout"
+                  title="Logout"
+                >
+                  <LogOut size={20} />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -80,6 +103,7 @@ function SearchBarInline({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Array<{ name: string; capabilities: Array<{ tag: string }> }>>([]);
   const [loading, setLoading] = useState(false);
+  const { token } = useKinshipStore();
 
   const handleSearch = async (q: string) => {
     setQuery(q);
@@ -87,7 +111,9 @@ function SearchBarInline({ onClose }: { onClose: () => void }) {
 
     setLoading(true);
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&suburb=Footscray`);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&suburb=Footscray`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const data = await res.json();
       setResults(Array.isArray(data) ? data : []);
     } catch { setResults([]); }

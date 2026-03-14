@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase";
+import { authenticateRequest } from "@/lib/auth-middleware";
 import { v4 as uuidv4 } from "uuid";
 
 export async function POST(req: NextRequest) {
+  const auth = authenticateRequest(req);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
     const { user_id, cluster_id, crisis_event_id, status, message, lat, lng } = body;
@@ -33,6 +37,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = authenticateRequest(req);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(req.url);
     const clusterId = searchParams.get("cluster_id");

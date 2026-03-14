@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useKinshipStore } from "@/lib/store";
+import { loadAuthFromOffline, saveAuthToOffline } from "@/lib/db";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -88,8 +89,13 @@ const NEED_OPTIONS = [
 
 export default function OnboardPage() {
   const router = useRouter();
-  const { setCurrentUser, setCapabilities, setNeeds, setCluster, setOnboardingStep, onboardingStep } = useKinshipStore();
+  const {
+    currentUser, token, setCurrentUser, setCapabilities, setNeeds,
+    setCluster, setOnboardingStep, onboardingStep,
+  } = useKinshipStore();
+
   const [step, setStep] = useState(onboardingStep);
+  const [authChecked, setAuthChecked] = useState(false);
 
   // Step 1 state
   const [name, setName] = useState("");
@@ -100,6 +106,48 @@ export default function OnboardPage() {
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>(["English"]);
   const [geoLocation, setGeoLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationStatus, setLocationStatus] = useState<string>("");
+
+  // Step 2 state
+  const [selectedCaps, setSelectedCaps] = useState<string[]>([]);
+  const [capFreeText, setCapFreeText] = useState("");
+
+  // Step 3 state
+  const [selectedNeeds, setSelectedNeeds] = useState<string[]>([]);
+  const [needFreeText, setNeedFreeText] = useState("");
+
+  // Loading/confirmation state
+  const [loading, setLoading] = useState(false);
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const [parsedCaps, setParsedCaps] = useState<Array<{ tag: string; category: string; detail?: string }>>([]);
+  const [parsedNeeds, setParsedNeeds] = useState<Array<{ tag: string; category: string; priority?: number }>>([]);
+
+  // Check auth + onboarding status on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      // Check Dexie for existing auth
+      const stored = await loadAuthFromOffline();
+
+      if (!stored?.token && !token) {
+        // No auth at all — go to login
+        router.replace("/");
+        return;
+      }
+
+      // If onboarding already complete, skip straight to dashboard
+      if (stored?.onboarding_complete) {
+        router.replace("/dashboard");
+        return;
+      }
+
+      // Pre-fill name from currentUser if available
+      if (currentUser?.name) setName(currentUser.name);
+
+      setAuthChecked(true);
+    };
+
+    checkAuth();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Try to get browser geolocation on mount
   useEffect(() => {
@@ -119,38 +167,20 @@ export default function OnboardPage() {
 
   // Get coordinates based on suburb name or geolocation
   const getUserCoords = () => {
-    // If browser geolocation is available, use it
     if (geoLocation) return geoLocation;
-    // Look up suburb in our table
     const suburbKey = suburb.toLowerCase().trim();
     if (SUBURB_COORDS[suburbKey]) {
       const base = SUBURB_COORDS[suburbKey];
-      // Add small random offset for privacy
       return {
         lat: base.lat + (Math.random() - 0.5) * 0.005,
         lng: base.lng + (Math.random() - 0.5) * 0.005,
       };
     }
-    // Final fallback: Footscray
     return {
       lat: -37.7996 + (Math.random() - 0.5) * 0.005,
       lng: 144.8994 + (Math.random() - 0.5) * 0.005,
     };
   };
-
-  // Step 2 state
-  const [selectedCaps, setSelectedCaps] = useState<string[]>([]);
-  const [capFreeText, setCapFreeText] = useState("");
-
-  // Step 3 state
-  const [selectedNeeds, setSelectedNeeds] = useState<string[]>([]);
-  const [needFreeText, setNeedFreeText] = useState("");
-
-  // Loading/confirmation state
-  const [loading, setLoading] = useState(false);
-  const [showConfirmation, setShowConfirmation] = useState(false);
-  const [parsedCaps, setParsedCaps] = useState<Array<{ tag: string; category: string; detail?: string }>>([]);
-  const [parsedNeeds, setParsedNeeds] = useState<Array<{ tag: string; category: string; priority?: number }>>([]);
 
   const toggleLang = (lang: string) => {
     setSelectedLanguages((prev) =>
@@ -172,51 +202,91 @@ export default function OnboardPage() {
 
   const handleSubmit = async () => {
     if (!name.trim()) { toast.error("Please enter your name"); return; }
+
+    const authToken = token || (await loadAuthFromOffline())?.token;
+    const userId = currentUser?.id || (await loadAuthFromOffline())?.user_id;
+
+    if (!authToken || !userId) {
+      toast.error("Session expired. Please sign in again.");
+      router.replace("/");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      // 1. Create user — use actual coordinates from suburb lookup or geolocation
       const coords = getUserCoords();
 
-      const userRes = await fetch("/api/users", {
+      // 1. POST to /api/users/{id}/onboarding — save all form data + set onboarding_complete=true
+      const onboardRes = await fetch(`/api/users/${userId}/onboarding`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
-          name, suburb, postcode,
+          name: name.trim(),
+          suburb,
+          postcode,
           lat: coords.lat,
           lng: coords.lng,
           approximate_location: approxLocation,
           household_size: householdSize,
           languages: selectedLanguages,
+          raw_capabilities_text: capFreeText,
+          raw_needs_text: needFreeText,
         }),
       });
-      const user = await userRes.json();
-      setCurrentUser(user);
 
-      // 2. Parse capabilities/needs
-      const parseRes = await fetch("/api/parse", {
+      const onboardData = await onboardRes.json();
+      if (!onboardRes.ok) {
+        toast.error(onboardData.error || "Failed to save profile");
+        setLoading(false);
+        return;
+      }
+
+      setCurrentUser(onboardData.profile);
+
+      // 2. POST to /api/users/{id}/parse — Claude NLP on free text + checkboxes → structured tags
+      const parseRes = await fetch(`/api/users/${userId}/parse`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
-          user_id: user.id,
           raw_capabilities_text: capFreeText,
           raw_needs_text: needFreeText,
           checkbox_capabilities: selectedCaps,
           checkbox_needs: selectedNeeds,
         }),
       });
-      const parsed = await parseRes.json();
-      setCapabilities(parsed.capabilities || []);
-      setNeeds(parsed.needs || []);
-      setParsedCaps(parsed.capabilities || []);
-      setParsedNeeds(parsed.needs || []);
 
-      // 3. Get/create cluster
-      const clusterRes = await fetch(`/api/clusters?user_id=${user.id}`);
+      const parsed = await parseRes.json();
+      if (parseRes.ok) {
+        setCapabilities(parsed.capabilities || []);
+        setNeeds(parsed.needs || []);
+        setParsedCaps(parsed.capabilities || []);
+        setParsedNeeds(parsed.needs || []);
+      }
+
+      // 3. POST /api/clusters to generate/join cluster for this user's suburb
+      const clusterRes = await fetch(`/api/clusters?user_id=${userId}`, {
+        headers: { "Authorization": `Bearer ${authToken}` },
+      });
       const clusterData = await clusterRes.json();
       if (clusterData && !clusterData.error) {
         setCluster(clusterData);
       }
+
+      // 4. Update Dexie myProfile with onboarding_complete=true
+      await saveAuthToOffline({
+        user_id: userId,
+        token: authToken,
+        email: currentUser?.email || "",
+        profile: onboardData.profile,
+        onboarding_complete: true,
+      });
 
       setShowConfirmation(true);
     } catch (error) {
@@ -232,8 +302,11 @@ export default function OnboardPage() {
     setOnboardingStep(s);
   };
 
+  // Don't render until auth check is complete
+  if (!authChecked) return <LoadingScreen />;
   if (loading) return <LoadingScreen />;
 
+  // Confirmation screen — user reviews parsed tags, then goes to dashboard
   if (showConfirmation) {
     return (
       <main className="min-h-screen bg-warmWhite p-4 flex items-center justify-center">
@@ -301,7 +374,7 @@ export default function OnboardPage() {
         {/* Step 1: About You */}
         {step === 1 && (
           <div className="space-y-5 animate-fade-slide-up">
-            <h2 className="text-2xl font-bold text-textDark">Let&apos;s get you set up</h2>
+            <h2 className="text-2xl font-bold text-textDark">Tell us about yourself</h2>
 
             <div>
               <label className="block text-sm font-medium text-textDark mb-1">Display name</label>
@@ -366,6 +439,12 @@ export default function OnboardPage() {
                 ))}
               </div>
             </div>
+
+            {locationStatus && (
+              <p className="text-sm text-textMuted flex items-center gap-1.5">
+                <MapPin size={14} /> {locationStatus}
+              </p>
+            )}
 
             <p className="text-sm text-textMuted flex items-center gap-1.5">
               <Lock size={14} /> We never store your exact address

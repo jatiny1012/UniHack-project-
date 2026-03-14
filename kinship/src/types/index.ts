@@ -1,5 +1,6 @@
 export interface UserProfile {
   id: string;
+  email: string;
   name: string;
   suburb: string;
   postcode: string;
@@ -8,6 +9,7 @@ export interface UserProfile {
   approximate_location: string;
   household_size: number;
   languages: string[];
+  onboarding_complete: boolean;
   created_at: string;
 }
 

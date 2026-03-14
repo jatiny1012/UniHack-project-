@@ -4,6 +4,8 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Users / Households
 CREATE TABLE profiles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
   name TEXT NOT NULL,
   suburb TEXT NOT NULL DEFAULT 'Footscray',
   postcode TEXT NOT NULL DEFAULT '3011',
@@ -14,6 +16,7 @@ CREATE TABLE profiles (
   languages TEXT[] DEFAULT '{"English"}',
   raw_capabilities_text TEXT,
   raw_needs_text TEXT,
+  onboarding_complete BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Toaster } from "react-hot-toast";
+import { ClientProviders } from "@/components/auth/ClientProviders";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -38,7 +39,7 @@ export default function RootLayout({
             },
           }}
         />
-        {children}
+        <ClientProviders>{children}</ClientProviders>
       </body>
     </html>
   );

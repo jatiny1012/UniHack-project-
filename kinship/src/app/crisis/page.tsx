@@ -11,34 +11,50 @@ import { MessageFeed } from "@/components/crisis/MessageFeed";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Phone, AlertTriangle, ArrowLeft } from "lucide-react";
-import { SEED_PROFILES } from "@/data/seed-profiles";
+import { Phone, AlertTriangle } from "lucide-react";
 
 export default function CrisisPage() {
   const router = useRouter();
   const {
-    currentUser, cluster, isCrisisActive, isSimulation,
+    currentUser, token, cluster, isCrisisActive, isSimulation,
     setCrisisActive, setSimulation, checkIns, addCheckIn,
   } = useKinshipStore();
   const [mockCheckIns, setMockCheckIns] = useState<Array<{
     user_id: string; user_name: string; status: string; message: string; delay: number;
   }>>([]);
 
-  const userId = currentUser?.id || SEED_PROFILES[1].id;
-  const userName = currentUser?.name || SEED_PROFILES[1].name;
+  useEffect(() => {
+    if (!token || !currentUser) {
+      router.push("/onboard");
+      return;
+    }
+  }, [token, currentUser, router]);
+
+  const userId = currentUser?.id || "";
+  const userName = currentUser?.name || "";
 
   useEffect(() => {
-    if (isSimulation && mockCheckIns.length === 0) {
-      // Generate mock check-ins for simulation
-      setMockCheckIns([
-        { user_id: SEED_PROFILES[1].id, user_name: "Raj", status: "safe", message: "All good here, doors locked up", delay: 0 },
-        { user_id: SEED_PROFILES[0].id, user_name: "Mrs Chen", status: "need_help", message: "Water rising near Barkly St, can't get out", delay: 1500 },
-        { user_id: SEED_PROFILES[3].id, user_name: "Omar", status: "safe", message: "", delay: 3000 },
-        { user_id: SEED_PROFILES[4].id, user_name: "Sarah", status: "helping_others", message: "Checking on elderly neighbours", delay: 4500 },
-        { user_id: SEED_PROFILES[2].id, user_name: "Maria", status: "safe", message: "Treating a minor injury at Raj's house", delay: 6000 },
-      ]);
+    if (isSimulation && mockCheckIns.length === 0 && cluster?.members) {
+      // Generate mock check-ins from actual cluster members
+      const statuses = ["safe", "need_help", "safe", "helping_others", "safe"];
+      const messages = [
+        "All good here, doors locked up",
+        "Water rising near my street, can't get out",
+        "",
+        "Checking on elderly neighbours",
+        "Everyone safe here",
+      ];
+      setMockCheckIns(
+        cluster.members.slice(0, 5).map((m, i) => ({
+          user_id: m.user_id,
+          user_name: m.profile?.name || `Member ${i + 1}`,
+          status: statuses[i % statuses.length],
+          message: messages[i % messages.length],
+          delay: i * 1500,
+        }))
+      );
     }
-  }, [isSimulation, mockCheckIns.length]);
+  }, [isSimulation, mockCheckIns.length, cluster]);
 
   const handleEndCrisis = () => {
     setCrisisActive(false);
@@ -47,14 +63,9 @@ export default function CrisisPage() {
     router.push("/dashboard");
   };
 
-  const members = cluster?.members || SEED_PROFILES.slice(0, 5).map((p, i) => ({
-    id: `member-${i}`,
-    user_id: p.id,
-    cluster_id: "fallback-cluster",
-    profile: { ...p, created_at: new Date().toISOString() },
-    capabilities: p.capabilities.map((c, ci) => ({ id: `cap-${p.id}-${ci}`, user_id: p.id, ...c })),
-    needs: p.needs.map((n, ni) => ({ id: `need-${p.id}-${ni}`, user_id: p.id, detail: "", ...n })),
-  }));
+  if (!token || !currentUser) return null;
+
+  const members = cluster?.members || [];
 
   return (
     <>

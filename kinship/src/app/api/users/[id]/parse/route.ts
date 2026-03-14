@@ -33,19 +33,44 @@ const NEEDS_CHECKBOX_MAP: Record<string, { tag: string; category: string; detail
   vision_hearing: { tag: "vision_hearing_support", category: "communication", detail: "Vision / hearing support", priority: 2 },
 };
 
-export async function POST(req: NextRequest) {
+/**
+ * POST /api/users/[id]/parse
+ * Runs Claude NLP on the user's raw capabilities/needs text,
+ * merges with checkbox selections, and saves structured tags
+ * to the capabilities and needs tables.
+ */
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   const auth = authenticateRequest(req);
   if (auth instanceof NextResponse) return auth;
 
   try {
+    const userId = params.id;
     const body = await req.json();
     const {
-      user_id,
       raw_capabilities_text,
       raw_needs_text,
       checkbox_capabilities,
       checkbox_needs,
     } = body;
+
+    const sb = createServerClient();
+    if (!sb) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 });
+    }
+
+    // Verify user exists
+    const { data: existing } = await sb
+      .from("profiles")
+      .select("id")
+      .eq("id", userId)
+      .single();
+
+    if (!existing) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
 
     let parsedCapabilities: { tag: string; category: string; detail: string }[] = [];
     let parsedNeeds: { tag: string; category: string; detail: string; priority: number }[] = [];
@@ -106,44 +131,54 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Insert into database
-    const sb = createServerClient();
-    if (sb) {
-      // Insert capabilities
-      if (parsedCapabilities.length > 0) {
-        const capRows = parsedCapabilities.map((c) => ({
-          id: uuidv4(),
-          user_id,
-          tag: c.tag,
-          category: c.category,
-          detail: c.detail,
-        }));
-        await sb.from("capabilities").insert(capRows);
-      }
+    // Clear existing tags for this user before re-inserting
+    await sb.from("capabilities").delete().eq("user_id", userId);
+    await sb.from("needs").delete().eq("user_id", userId);
 
-      // Insert needs
-      if (parsedNeeds.length > 0) {
-        const needRows = parsedNeeds.map((n) => ({
-          id: uuidv4(),
-          user_id,
-          tag: n.tag,
-          category: n.category,
-          detail: n.detail || "",
-          priority: n.priority || 2,
-        }));
-        await sb.from("needs").insert(needRows);
-      }
-
-      // Update raw text on profile
-      await sb.from("profiles").update({
-        raw_capabilities_text,
-        raw_needs_text,
-      }).eq("id", user_id);
+    // Insert capabilities
+    if (parsedCapabilities.length > 0) {
+      const capRows = parsedCapabilities.map((c) => ({
+        id: uuidv4(),
+        user_id: userId,
+        tag: c.tag,
+        category: c.category,
+        detail: c.detail,
+      }));
+      await sb.from("capabilities").insert(capRows);
     }
 
+    // Insert needs
+    if (parsedNeeds.length > 0) {
+      const needRows = parsedNeeds.map((n) => ({
+        id: uuidv4(),
+        user_id: userId,
+        tag: n.tag,
+        category: n.category,
+        detail: n.detail || "",
+        priority: n.priority || 2,
+      }));
+      await sb.from("needs").insert(needRows);
+    }
+
+    // Update raw text on profile
+    await sb.from("profiles").update({
+      raw_capabilities_text: raw_capabilities_text || "",
+      raw_needs_text: raw_needs_text || "",
+    }).eq("id", userId);
+
+    // Return structured results
     return NextResponse.json({
-      capabilities: parsedCapabilities.map((c, i) => ({ id: `cap-${user_id}-${i}`, user_id, ...c })),
-      needs: parsedNeeds.map((n, i) => ({ id: `need-${user_id}-${i}`, user_id, ...n, detail: n.detail || "" })),
+      capabilities: parsedCapabilities.map((c, i) => ({
+        id: `cap-${userId}-${i}`,
+        user_id: userId,
+        ...c,
+      })),
+      needs: parsedNeeds.map((n, i) => ({
+        id: `need-${userId}-${i}`,
+        user_id: userId,
+        ...n,
+        detail: n.detail || "",
+      })),
       languages: parsedLanguages,
     });
   } catch (error: unknown) {

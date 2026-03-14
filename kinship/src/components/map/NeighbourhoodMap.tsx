@@ -6,7 +6,6 @@ import L from "leaflet";
 import { FLOOD_ZONE_GEOJSON } from "@/data/flood-zones";
 import { formatDistance, haversineDistance, getCategoryIcon } from "@/lib/utils";
 import type { Cluster } from "@/types";
-import { SEED_PROFILES } from "@/data/seed-profiles";
 
 const CLUSTER_COLORS = [
   "#1B4F72", "#E74C3C", "#27AE60", "#F39C12",
@@ -85,9 +84,7 @@ export default function NeighbourhoodMap({
     }
   }
 
-  // Non-cluster markers from seed data
-  const clusterMemberIds = new Set(members.map((m) => m.user_id));
-  const otherProfiles = SEED_PROFILES.filter((p) => !clusterMemberIds.has(p.id));
+
 
   return (
     <MapContainer
@@ -160,22 +157,7 @@ export default function NeighbourhoodMap({
         />
       ))}
 
-      {/* Other (non-cluster) resident markers */}
-      {otherProfiles.map((p) => (
-        <Marker
-          key={`other-${p.id}`}
-          position={[p.lat, p.lng]}
-          icon={createMarkerIcon("#B0BEC5")}
-        >
-          <Popup>
-            <div className="text-sm">
-              <strong>{p.name}</strong>
-              <br />
-              <span className="text-gray-500">{p.languages.join(", ")}</span>
-            </div>
-          </Popup>
-        </Marker>
-      ))}
+
 
       {/* Cluster member markers */}
       {members.map((m, i) => {

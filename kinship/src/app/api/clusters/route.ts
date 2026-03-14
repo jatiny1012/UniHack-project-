@@ -1,15 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase";
+import { authenticateRequest } from "@/lib/auth-middleware";
 import { CLUSTERING_SYSTEM_PROMPT } from "@/lib/matching";
-import { SEED_PROFILES } from "@/data/seed-profiles";
 import { haversineDistance } from "@/lib/utils";
 import { v4 as uuidv4 } from "uuid";
 
 export async function POST(req: NextRequest) {
+  const auth = authenticateRequest(req);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
     const { suburb, postcode } = body;
     const sb = createServerClient();
+
+    if (!sb) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 });
+    }
+
+    const { data: dbProfiles } = await sb
+      .from("profiles").select("id, name, lat, lng, languages").eq("suburb", suburb || "Footscray");
 
     let profiles: Array<{
       id: string; name: string; lat: number; lng: number;
@@ -18,33 +28,17 @@ export async function POST(req: NextRequest) {
       needs: { tag: string; category: string; priority: number }[];
     }> = [];
 
-    if (sb) {
-      const { data: dbProfiles } = await sb
-        .from("profiles").select("*")
-        .eq("suburb", suburb || "Footscray");
-
-      if (dbProfiles && dbProfiles.length > 0) {
-        for (const p of dbProfiles) {
-          const { data: caps } = await sb.from("capabilities").select("*").eq("user_id", p.id);
-          const { data: nds } = await sb.from("needs").select("*").eq("user_id", p.id);
-          profiles.push({
-            id: p.id, name: p.name, lat: p.lat, lng: p.lng,
-            languages: p.languages || ["English"],
-            capabilities: (caps || []).map((c: Record<string, string>) => ({ tag: c.tag, category: c.category, detail: c.detail })),
-            needs: (nds || []).map((n: Record<string, string | number>) => ({ tag: n.tag as string, category: n.category as string, priority: n.priority as number })),
-          });
-        }
+    if (dbProfiles && dbProfiles.length > 0) {
+      for (const p of dbProfiles) {
+        const { data: caps } = await sb.from("capabilities").select("*").eq("user_id", p.id);
+        const { data: nds } = await sb.from("needs").select("*").eq("user_id", p.id);
+        profiles.push({
+          id: p.id, name: p.name, lat: p.lat, lng: p.lng,
+          languages: p.languages || ["English"],
+          capabilities: (caps || []).map((c: Record<string, string>) => ({ tag: c.tag, category: c.category, detail: c.detail })),
+          needs: (nds || []).map((n: Record<string, string | number>) => ({ tag: n.tag as string, category: n.category as string, priority: n.priority as number })),
+        });
       }
-    }
-
-    // Fallback to seed data
-    if (profiles.length === 0) {
-      profiles = SEED_PROFILES.map((p) => ({
-        id: p.id, name: p.name, lat: p.lat, lng: p.lng,
-        languages: p.languages,
-        capabilities: p.capabilities,
-        needs: p.needs,
-      }));
     }
 
     if (profiles.length < 3) {
@@ -90,18 +84,17 @@ export async function POST(req: NextRequest) {
       clusterResults = createFallbackClusters(profiles);
     }
 
+    // Delete existing clusters for this suburb
+    const { data: existingClusters } = await sb.from("clusters").select("id").eq("suburb", suburb || "Footscray");
+    if (existingClusters) {
+      for (const c of existingClusters) {
+        await sb.from("cluster_members").delete().eq("cluster_id", c.id);
+      }
+      await sb.from("clusters").delete().eq("suburb", suburb || "Footscray");
+    }
+
     // Save to database
     const savedClusters = [];
-    if (sb) {
-      // Delete existing clusters for this suburb
-      const { data: existingClusters } = await sb.from("clusters").select("id").eq("suburb", suburb || "Footscray");
-      if (existingClusters) {
-        for (const c of existingClusters) {
-          await sb.from("cluster_members").delete().eq("cluster_id", c.id);
-        }
-        await sb.from("clusters").delete().eq("suburb", suburb || "Footscray");
-      }
-    }
 
     for (const cr of clusterResults) {
       const clusterId = uuidv4();
@@ -127,24 +120,22 @@ export async function POST(req: NextRequest) {
         }).filter((m) => m.profile !== null),
       };
 
-      if (sb) {
-        await sb.from("clusters").insert({
-          id: clusterId,
-          name: cr.name,
-          suburb: suburb || "Footscray",
-          resilience_score: cr.resilience_score,
-          gaps: JSON.stringify(cr.gaps),
-          explanation: cr.explanation,
-          status: "peace",
-        });
+      await sb.from("clusters").insert({
+        id: clusterId,
+        name: cr.name,
+        suburb: suburb || "Footscray",
+        resilience_score: cr.resilience_score,
+        gaps: JSON.stringify(cr.gaps),
+        explanation: cr.explanation,
+        status: "peace",
+      });
 
-        const memberRows = cr.member_ids.map((mid) => ({
-          id: uuidv4(),
-          cluster_id: clusterId,
-          user_id: mid,
-        }));
-        await sb.from("cluster_members").insert(memberRows);
-      }
+      const memberRows = cr.member_ids.map((mid) => ({
+        id: uuidv4(),
+        cluster_id: clusterId,
+        user_id: mid,
+      }));
+      await sb.from("cluster_members").insert(memberRows);
 
       savedClusters.push(cluster);
     }
@@ -157,6 +148,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = authenticateRequest(req);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(req.url);
     const userId = searchParams.get("user_id");
@@ -166,111 +160,50 @@ export async function GET(req: NextRequest) {
     }
 
     const sb = createServerClient();
-    if (sb) {
-      // Find user's cluster
-      const { data: membership } = await sb
-        .from("cluster_members").select("cluster_id").eq("user_id", userId).single();
-
-      if (membership) {
-        const { data: cluster } = await sb
-          .from("clusters").select("*").eq("id", membership.cluster_id).single();
-
-        if (cluster) {
-          const { data: members } = await sb
-            .from("cluster_members").select("*, profiles(*)").eq("cluster_id", cluster.id);
-
-          const { data: userProfile } = await sb.from("profiles").select("*").eq("id", userId).single();
-
-          const enrichedMembers = [];
-          for (const m of members || []) {
-            const { data: caps } = await sb.from("capabilities").select("*").eq("user_id", m.user_id);
-            const { data: nds } = await sb.from("needs").select("*").eq("user_id", m.user_id);
-            const profile = (m as Record<string, unknown>).profiles as Record<string, unknown>;
-            enrichedMembers.push({
-              ...m,
-              profile: profile || {},
-              capabilities: caps || [],
-              needs: nds || [],
-              distance_meters: userProfile
-                ? haversineDistance(userProfile.lat, userProfile.lng, (profile?.lat as number) || 0, (profile?.lng as number) || 0)
-                : 0,
-            });
-          }
-
-          return NextResponse.json({
-            ...cluster,
-            gaps: typeof cluster.gaps === "string" ? JSON.parse(cluster.gaps) : cluster.gaps,
-            members: enrichedMembers,
-          });
-        }
-      }
+    if (!sb) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 });
     }
 
-    // Fallback: Find in seed-based clusters
-    // First generate clusters from seed data, then find user's cluster
-    const seedProfiles = SEED_PROFILES.map((p) => ({
-      id: p.id, name: p.name, lat: p.lat, lng: p.lng,
-      languages: p.languages, capabilities: p.capabilities, needs: p.needs,
-    }));
+    // Find user's cluster
+    const { data: membership } = await sb
+      .from("cluster_members").select("cluster_id").eq("user_id", userId).single();
 
-    const clusters = createFallbackClusters(seedProfiles);
-    const userCluster = clusters.find((c) => c.member_ids.includes(userId));
-
-    if (!userCluster) {
-      // If user is new (not in seed data), assign to first cluster
-      if (clusters.length > 0) {
-        const cl = clusters[0];
-        const clusterId = uuidv4();
-        return NextResponse.json({
-          id: clusterId,
-          name: cl.name,
-          suburb: "Footscray",
-          resilience_score: cl.resilience_score,
-          gaps: cl.gaps,
-          explanation: cl.explanation,
-          status: "peace",
-          created_at: new Date().toISOString(),
-          members: cl.member_ids.slice(0, 5).map((mid) => {
-            const p = SEED_PROFILES.find((pr) => pr.id === mid);
-            if (!p) return null;
-            return {
-              id: uuidv4(), user_id: mid, cluster_id: clusterId,
-              profile: { ...p, created_at: new Date().toISOString() },
-              capabilities: p.capabilities.map((c, i) => ({ id: `cap-${mid}-${i}`, user_id: mid, ...c })),
-              needs: p.needs.map((n, i) => ({ id: `need-${mid}-${i}`, user_id: mid, detail: "", ...n })),
-              distance_meters: 200 + Math.random() * 300,
-            };
-          }).filter(Boolean),
-        });
-      }
-      return NextResponse.json({ error: "No cluster found" }, { status: 404 });
+    if (!membership) {
+      return NextResponse.json({ error: "No cluster found for this user" }, { status: 404 });
     }
 
-    const clusterId = uuidv4();
-    const userSeed = SEED_PROFILES.find((p) => p.id === userId);
+    const { data: cluster } = await sb
+      .from("clusters").select("*").eq("id", membership.cluster_id).single();
+
+    if (!cluster) {
+      return NextResponse.json({ error: "Cluster not found" }, { status: 404 });
+    }
+
+    const { data: members } = await sb
+      .from("cluster_members").select("*, profiles(id, name, email, suburb, postcode, lat, lng, approximate_location, household_size, languages, onboarding_complete, created_at)").eq("cluster_id", cluster.id);
+
+    const { data: userProfile } = await sb.from("profiles").select("*").eq("id", userId).single();
+
+    const enrichedMembers = [];
+    for (const m of members || []) {
+      const { data: caps } = await sb.from("capabilities").select("*").eq("user_id", m.user_id);
+      const { data: nds } = await sb.from("needs").select("*").eq("user_id", m.user_id);
+      const profile = (m as Record<string, unknown>).profiles as Record<string, unknown>;
+      enrichedMembers.push({
+        ...m,
+        profile: profile || {},
+        capabilities: caps || [],
+        needs: nds || [],
+        distance_meters: userProfile
+          ? haversineDistance(userProfile.lat, userProfile.lng, (profile?.lat as number) || 0, (profile?.lng as number) || 0)
+          : 0,
+      });
+    }
 
     return NextResponse.json({
-      id: clusterId,
-      name: userCluster.name,
-      suburb: "Footscray",
-      resilience_score: userCluster.resilience_score,
-      gaps: userCluster.gaps,
-      explanation: userCluster.explanation,
-      status: "peace",
-      created_at: new Date().toISOString(),
-      members: userCluster.member_ids.map((mid) => {
-        const p = SEED_PROFILES.find((pr) => pr.id === mid);
-        if (!p) return null;
-        return {
-          id: uuidv4(), user_id: mid, cluster_id: clusterId,
-          profile: { ...p, created_at: new Date().toISOString() },
-          capabilities: p.capabilities.map((c, i) => ({ id: `cap-${mid}-${i}`, user_id: mid, ...c })),
-          needs: p.needs.map((n, i) => ({ id: `need-${mid}-${i}`, user_id: mid, detail: "", ...n })),
-          distance_meters: userSeed
-            ? haversineDistance(userSeed.lat, userSeed.lng, p.lat, p.lng)
-            : 200 + Math.random() * 300,
-        };
-      }).filter(Boolean),
+      ...cluster,
+      gaps: typeof cluster.gaps === "string" ? JSON.parse(cluster.gaps) : cluster.gaps,
+      members: enrichedMembers,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to get cluster";
