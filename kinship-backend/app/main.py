@@ -14,7 +14,12 @@ app = FastAPI(title="Kinship Backend Core API")
 # Configure CORS for local development with Next.js
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+    "http://localhost:3000",
+    "http://localhost:3001",
+    os.getenv("FRONTEND_URL", ""),
+],
+
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
